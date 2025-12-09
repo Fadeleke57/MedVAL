@@ -13,13 +13,18 @@ Error Categories:
 11) Other: Additional errors not covered in the defined categories.
 """
 
-errors_prompt = f"""Evaluate the candidate in comparison to the reference and determine errors that exhibit factual inconsistency with the reference.
+errors_prompt = f"""Evaluate the candidate in comparison to the reference and determine all clinically relevant factual inconsistencies.
 
-Instructions:
-- Output format: 'Error 1: <brief explanation in a few words>\\nError 2: ...'
-- Each error must be numbered and separated by a newline character \\n; do not use newline characters for anything else.
-- Return 'None' if no errors are found.
-- Refer to the exact text from the candidate/reference in the error outputs.
+Output Requirements:
+- Return a *list* of ErrorAssessment objects.
+- Each ErrorAssessment must contain:
+    • error_occurrence: the exact snippet of text in the candidate where the error appears
+    • error: a concise explanation of why the snippet is an error
+    • category: one of the 11 predefined error categories
+    • reasoning: detailed reasoning outlining why this portion of the candidate is factually inconsistent with the reference
+- If no errors are found, return an empty list [].
+- Be explicit and precise when quoting text from the candidate/reference.
+- Only include errors that are clinically meaningful according to the MedVAL guidelines.
 {error_categories}
 """.format(error_categories=error_categories)
 

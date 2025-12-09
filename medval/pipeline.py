@@ -6,7 +6,7 @@ import random
 from dspy.datasets import DataLoader
 from utils.prompts import adversarial_attacks, adversarial_attack_base, error_categories
 from medval.generator import MedVAL_Generator
-from medval.validator import MedVAL_Validator
+from medval.validator import MedVAL_Validator, DetectTask
 from dspy.clients.lm_local import LocalProvider
 from datasets import load_dataset
 
@@ -28,6 +28,7 @@ class MedVAL(dspy.Module):
         self.student_model = None
         self.generator = dspy.ChainOfThought(MedVAL_Generator).deepcopy()
         self.validator = dspy.ChainOfThought(MedVAL_Validator).deepcopy()
+        self.task_detector = dspy.ChainOfThought(DetectTask).deepcopy()
         self.prompts = self._load_prompts()
         self._configure_lm()
         self.dl = DataLoader()
@@ -93,6 +94,8 @@ class MedVAL(dspy.Module):
             attack_level = random.randint(1, len(adversarial_attacks))
             candidate = self.generate(reference=reference, attack_level=attack_level, task=task)
 
+        if not task:
+            task = self.task_detector(candidate=candidate, reference=reference)
         result = self.validator(instruction=self.prompts[task], reference=reference, candidate=candidate)
         
         if (self.data == "train"):

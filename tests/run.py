@@ -16,7 +16,7 @@ sys.path.insert(0, str(project_root))
 
 import dspy
 from datasets import load_dataset
-from medval.validator import DetectTask, MedVAL_Validator
+from medval.pipeline import MedVAL
 
 
 with open("utils/task_prompts.json", "r") as f:
@@ -50,34 +50,34 @@ def load_test_data():
     return test_cases
 
 
-def configure_validator(model="openai/gpt-4o"):
-    """Initialize DSPy and validator modules"""
-    api_key = os.environ.get("API_KEY") or os.environ.get("OPENAI_API_KEY")
+def configure_pipeline(model="openai/gpt-4o", api_key=None):
+    """Initialize MedVAL pipeline"""
+    # Get all available tasks from task_prompts.json
+    all_tasks = list(task_prompts.keys())
 
-    if not api_key:
-        print("  Error: No API key found.")
-        print("   Set API_KEY or OPENAI_API_KEY environment variable.")
-        sys.exit(1)
+    pipeline = MedVAL(
+        tasks=all_tasks,
+        model=model,
+        api_base=None,
+        api_key=api_key,
+        data="test",  # Not in train mode
+        n_samples=None,
+        debug=False,
+        method=None,
+        threshold=None,
+        input_csv=None
+    )
 
-    lm = dspy.LM(model=model, api_key=api_key)
-    dspy.configure(lm=lm)
-
-    return {
-        "task_detector": dspy.ChainOfThought(DetectTask),
-        "validator": dspy.ChainOfThought(MedVAL_Validator)
-    }
+    return pipeline
 
 
-def run_validation(modules, reference, candidate, expected_task=None):
-    """Run complete validation workflow"""
+def run_validation(pipeline, reference, candidate, expected_task):
+    """Run complete validation workflow using pipeline"""
     try:
-        detected = modules['task_detector'](reference=reference, candidate=candidate)
-
-        instruction_text = task_prompts.get(detected.task, "")
-
-        result = modules['validator'](
-            instruction=instruction_text,
+        # Call the pipeline
+        result = pipeline(
             reference=reference,
+            task=expected_task,
             candidate=candidate
         )
 
@@ -85,12 +85,9 @@ def run_validation(modules, reference, candidate, expected_task=None):
             "success": True,
             "input": reference,
             "candidate": candidate,
-            "detected_task": detected.task,
             "expected_task": expected_task,
-            "task_correct": (detected.task == expected_task) if expected_task else None,
-            "detected_instruction": instruction_text,
-            "risk_level": result.risk_level,
-            "errors": result.structured_errors,
+            "risk_level": result.attack_prediction,
+            "errors": result.err,
             "error": None
         }
     except Exception as e:
@@ -98,9 +95,7 @@ def run_validation(modules, reference, candidate, expected_task=None):
             "success": False,
             "input": reference,
             "candidate": candidate,
-            "detected_task": None,
             "expected_task": expected_task,
-            "task_correct": False,
             "error": str(e)
         }
 
@@ -129,12 +124,6 @@ def print_case_result(case, result, verbose=False):
             risk_indicator = "NEAR"
         else:
             risk_indicator = "MISMATCH"
-
-        # indicate if task was detected correctly
-        if result['task_correct']:
-            task_indicator = f"✓ (detected: {result['detected_task']}, expected: {case['task']})"
-        else:
-            task_indicator = f"✗ (detected: {result['detected_task']}, expected: {case['task']})"
 
         print(f"{status} {risk_indicator} {case['id']} | Task: {task_indicator}")
         print(f"    Expected Risk: {expected_risk}/4  |  Actual Risk: {actual_risk}/4\n")
@@ -181,13 +170,11 @@ def calculate_metrics(results):
             "failed": total,
             "exact_accuracy": 0,
             "within_1_accuracy": 0,
-            "task_detection_accuracy": 0
         }
 
     # risk level accuracy
     exact_matches = 0
     within_1 = 0
-    task_correct = 0
 
     for r in results:
         if not r['result']['success']:
@@ -203,17 +190,12 @@ def calculate_metrics(results):
         elif diff == 1:
             within_1 += 1
 
-        # task detection accuracy
-        if r['result'].get('task_correct'):
-            task_correct += 1
-
     return {
         "total": total,
         "successful": successful,
         "failed": total - successful,
         "exact_accuracy": exact_matches / successful,
         "within_1_accuracy": within_1 / successful,
-        "task_detection_accuracy": task_correct / successful
     }
 
 
@@ -226,8 +208,6 @@ def print_summary(results):
     print(f"\nTotal Tests: {metrics['total']}")
     print(f"  Successful: {metrics['successful']}")
     print(f"  Failed: {metrics['failed']}")
-
-    print(f"\nTask Detection Accuracy: {metrics['task_detection_accuracy']:.1%}")
 
     print(f"\nRisk Level Accuracy:")
     print(f"  EXACT Match: {metrics['exact_accuracy']:.1%}")
@@ -312,8 +292,8 @@ Examples:
         print("No test cases match the filters.")
         return
 
-    print(f"\nInitializing validator with model: {args.model}")
-    modules = configure_validator(args.model)
+    print(f"\nInitializing pipeline with model: {args.model}")
+    pipeline = configure_pipeline(args.model)
 
     print_header(f"Running {len(test_cases)} Test Cases")
 
@@ -324,7 +304,7 @@ Examples:
         print(f"[{i}/{len(test_cases)}] Testing {case['id']}...")
 
         result = run_validation(
-            modules,
+            pipeline,
             reference=case['reference'],
             candidate=case['candidate'],
             expected_task=case['task']
@@ -353,8 +333,6 @@ Examples:
                 {
                     "id": r['case']['id'],
                     "expected_task": r['case']['task'],
-                    "detected_task": r['result'].get('detected_task'),
-                    "task_correct": r['result'].get('task_correct'),
                     "expected_risk": r['case']['risk_level'],
                     "actual_risk": r['result'].get('risk_level'),
                     "success": r['result']['success'],
