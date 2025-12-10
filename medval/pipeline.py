@@ -95,7 +95,8 @@ class MedVAL(dspy.Module):
             candidate = self.generate(reference=reference, attack_level=attack_level, task=task)
 
         if not task:
-            task = self.task_detector(candidate=candidate, reference=reference)
+            task_result = self.task_detector(candidate=candidate, reference=reference)
+            task = task_result.task
         result = self.validator(instruction=self.prompts[task], reference=reference, candidate=candidate)
         
         if (self.data == "train"):
